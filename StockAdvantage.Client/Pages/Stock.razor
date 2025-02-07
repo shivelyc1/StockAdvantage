@@ -5,8 +5,9 @@
 @implements IAsyncDisposable
 
 <h3>Stock Price Tracker</h3>
+<p>Balance: @Balance</p>
 
-<p>Stock Symbol: @StockSymbol</p>
+<p>Stock Symbol: <input type="text" value="@StockSymbol" @oninput="(e) => ChangeStockSymbol(e.Value.ToString()" /></p>
 <p>Current Price: @StockPrice.ToString("F2")</p>
 
 @if (IsConnected)
@@ -21,8 +22,14 @@ else
 }
 
 @code {
-    private string StockSymbol = "AAPL";
+    private string StockSymbol { get; set; } = "AAPL";
     private decimal StockPrice { get; set; }
+
+    // User
+    private decimal Balance;
+    
+    
+    
     private HubConnection? hubConnection;
     private bool IsConnected => hubConnection?.State == HubConnectionState.Connected;
 
@@ -30,6 +37,21 @@ else
     {
         await StartConnection();
     }
+
+    protected override void OnInitialized()
+    {
+        // Init Balance to 50000 
+        Balance = 50000;
+    }
+
+    private void ChangeStockSymbol(string symbol)
+    {
+        this.StockSymbol = symbol;
+    }
+    
+    
+    
+    
 
     private async Task StartConnection()
     {
