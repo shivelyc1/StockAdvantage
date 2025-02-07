@@ -8,7 +8,7 @@ public class StockService
 {
     private readonly IHubContext<StockHub> _hubContext;
     private readonly HttpClient _httpClient;
-    private readonly string _apiKey = "REPLACE_API_KEY :)";
+    private readonly string _apiKey = "ca73dac53bmsh50b1d368611bb83p10197djsnc04746b862a0";
 
     public StockService(IHubContext<StockHub> hubContext, HttpClient httpClient)
     {
