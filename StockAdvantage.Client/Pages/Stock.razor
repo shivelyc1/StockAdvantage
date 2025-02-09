@@ -1,14 +1,34 @@
 @page "/Stock"
 @using Microsoft.AspNetCore.SignalR.Client
+@using StockAdvantage.Client.Models
 @inject NavigationManager Navigation
 @rendermode InteractiveWebAssembly
 @implements IAsyncDisposable
 
 <h3>Stock Price Tracker</h3>
-<p>Balance: @Balance</p>
+<p>Balance: @(Balance.ToString("F2"))</p>
 
-<p>Stock Symbol: <input type="text" value="@StockSymbol" @oninput="(e) => ChangeStockSymbol(e.Value.ToString()" /></p>
+<p>Stock Symbol: <input type="text" @bind="StockSymbol"  /></p>
 <p>Current Price: @StockPrice.ToString("F2")</p>
+
+<p>Share Amount: @ShareAmount</p>
+<p>Total Cost: @TotalCost</p>
+<input type="number" min="0" step="any" value="@ShareAmount" @onchange="ChangeShareAmount"/>
+<button @onclick="BuyStock" disabled="@IsBuyButtonDisabled()">Buy</button>
+
+<p>@RANDOM</p>
+<!-- 
+Error Text
+-->
+@if (!ErrorText.Equals(""))
+{
+    <p>@ErrorText</p>
+}
+
+<div>
+    <h2>Sell Stock</h2>
+    <input type="number" step="any" @bind="SellShareAmount"/>
+</div>
 
 @if (IsConnected)
 {
@@ -21,14 +41,60 @@ else
     <button @onclick="StartConnection">Reconnect</button>
 }
 
+
+<table>
+    <thead>
+        <tr style="align-items: center">
+            <th>Date</th>
+            <th>Symbol</th>
+            <th>Amount</th>
+            <th>Price</th>
+            <th>Total Cost</th>
+        </tr>
+    </thead>
+    <tbody>
+        @foreach (Transaction t in Transactions)
+        {
+            <tr>
+                <td>@t.date</td>
+                <td>@t.shortName</td>
+                <td>@t.amount</td>
+                <td>@t.price</td>
+                <td>@t.totalCost</td>
+                
+            </tr>
+        }
+    </tbody>
+</table>
+
 @code {
     private string StockSymbol { get; set; } = "AAPL";
     private decimal StockPrice { get; set; }
 
+    private decimal ShareAmount { get; set; } = 1;
+    private decimal SellShareAmount { get; set; } = 0;
+    private decimal TotalCost { get; set; }
+
+    private string ErrorText { get; set; } = "";
+    
+
+    private string RANDOM = "";
+    
     // User
     private decimal Balance;
+    private List<Transaction> Transactions = new List<Transaction>();
+
     
-    
+    private void ChangeShareAmount(ChangeEventArgs e)
+    {
+        if (e.Value == null)
+        {
+            return;
+        }
+        
+        ShareAmount = Decimal.Parse(e.Value.ToString());
+        TotalCost = CalculateTotalCost();
+    }
     
     private HubConnection? hubConnection;
     private bool IsConnected => hubConnection?.State == HubConnectionState.Connected;
@@ -42,13 +108,38 @@ else
     {
         // Init Balance to 50000 
         Balance = 50000;
-    }
 
-    private void ChangeStockSymbol(string symbol)
-    {
-        this.StockSymbol = symbol;
+        TotalCost = CalculateTotalCost();
     }
     
+    // Used to control disabled on input 
+    private bool IsBuyButtonDisabled()
+    {
+        return TotalCost > Balance;
+    }
+
+    // Used to calculate TotalPrice
+    private decimal CalculateTotalCost()
+    {
+        return StockPrice * ShareAmount;
+    }
+
+    // Send BuyStock request and listen for ReceiveBuyStockUpdate
+    private async Task BuyStock()
+    {
+        // Check for proper amount
+        if (TotalCost > Balance)
+        {
+            ErrorText = "Insufficient Balance";
+            return;
+        }
+        
+        // Send request to server to BuyStock
+        if (hubConnection is not null && hubConnection.State == HubConnectionState.Connected)
+        {
+            await hubConnection.SendAsync("SendBuyStockUpdate", StockSymbol, ShareAmount);
+        }
+    }
     
     
     
@@ -69,12 +160,26 @@ else
         {
             StockSymbol = symbol;
             StockPrice = price;
+            TotalCost = price * ShareAmount;
 
             // Debugging: Log the received values to the console
             Console.WriteLine($"Received stock update: {StockSymbol} - {StockPrice}");
 
             InvokeAsync(StateHasChanged);
         });
+        
+        // Listen for Buy
+        hubConnection.On<string, decimal, decimal, decimal>("ReceiveBuyStockUpdate", (stockSymbol, amount, price, totalCost) =>
+        {
+            // Show message of transaction.
+
+            Balance -= totalCost;
+            Transactions.Add(new Transaction(stockSymbol, amount, price, totalCost, TransactionType.BUY));
+            InvokeAsync(StateHasChanged);
+        });
+        
+        // Listen for Sell
+        
 
         try
         {
@@ -90,11 +195,12 @@ else
 
     private async Task StartStockUpdates()
     {
+        // Loop with delay in for intervals.
         while (IsConnected)
         {
             await hubConnection.SendAsync("SendStockUpdate", StockSymbol);
             Console.WriteLine("Requesting stock update...");
-            await Task.Delay(5000); 
+            await Task.Delay(60000); 
         }
     }
 

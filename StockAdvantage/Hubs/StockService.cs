@@ -37,13 +37,13 @@ public class StockService
             // hopefully we're getting here now
             var responseContent = await response.Content.ReadAsStringAsync();
             Console.WriteLine($"Response Status Code: {response.StatusCode}");
-            Console.WriteLine($"Response Body: {responseContent}");
+            // Console.WriteLine($"Response Body: {responseContent}");
 
             response.EnsureSuccessStatusCode();
 
             using var jsonDoc = JsonDocument.Parse(responseContent);
             var root = jsonDoc.RootElement;
-
+            
             if (root.TryGetProperty("price", out var priceElement) &&
                 priceElement.TryGetProperty("regularMarketPrice", out var marketPriceElement) &&
                 marketPriceElement.TryGetProperty("raw", out var rawPriceElement) &&
