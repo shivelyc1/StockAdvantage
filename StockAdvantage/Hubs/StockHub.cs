@@ -30,4 +30,13 @@ public class StockHub : Hub
         await Clients.All.SendAsync("ReceiveBuyStockUpdate", symbol, amount, price, totalCost);
     }
 
+    public async Task SendSellStockUpdate(string symbol, decimal amount)
+    {
+        var price = await _stockService.GetStockPriceAsync(symbol);
+        _logger.LogInformation($"Sending sell stock for {symbol}: {amount}");
+        
+        
+        await Clients.All.SendAsync("ReceiveSellStockUpdate", symbol, amount, price);
+    }
+
 }

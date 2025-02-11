@@ -8,7 +8,7 @@ public class StockService
 {
     private readonly IHubContext<StockHub> _hubContext;
     private readonly HttpClient _httpClient;
-    private readonly string _apiKey = "ca73dac53bmsh50b1d368611bb83p10197djsnc04746b862a0";
+    private readonly string _apiKey = "API KEY HERE";
 
     public StockService(IHubContext<StockHub> hubContext, HttpClient httpClient)
     {
@@ -24,6 +24,9 @@ public class StockService
 
     public async Task<decimal> GetStockPriceAsync(string symbol)
     {
+        // TODO: Remove this
+        // return (decimal) 100.0;
+        
         try
         {
             var url = $"https://apidojo-yahoo-finance-v1.p.rapidapi.com/stock/v2/get-summary?symbol={symbol}&region=US";
@@ -37,10 +40,10 @@ public class StockService
             // hopefully we're getting here now
             var responseContent = await response.Content.ReadAsStringAsync();
             Console.WriteLine($"Response Status Code: {response.StatusCode}");
-            // Console.WriteLine($"Response Body: {responseContent}");
+            Console.WriteLine($"Response Body: {responseContent}");
 
             response.EnsureSuccessStatusCode();
-
+            
             using var jsonDoc = JsonDocument.Parse(responseContent);
             var root = jsonDoc.RootElement;
             

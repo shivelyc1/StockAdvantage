@@ -6,30 +6,6 @@
 @implements IAsyncDisposable
 
 <h3>Stock Price Tracker</h3>
-<p>Balance: @(Balance.ToString("F2"))</p>
-
-<p>Stock Symbol: <input type="text" @bind="StockSymbol"  /></p>
-<p>Current Price: @StockPrice.ToString("F2")</p>
-
-<p>Share Amount: @ShareAmount</p>
-<p>Total Cost: @TotalCost</p>
-<input type="number" min="0" step="any" value="@ShareAmount" @onchange="ChangeShareAmount"/>
-<button @onclick="BuyStock" disabled="@IsBuyButtonDisabled()">Buy</button>
-
-<p>@RANDOM</p>
-<!-- 
-Error Text
--->
-@if (!ErrorText.Equals(""))
-{
-    <p>@ErrorText</p>
-}
-
-<div>
-    <h2>Sell Stock</h2>
-    <input type="number" step="any" @bind="SellShareAmount"/>
-</div>
-
 @if (IsConnected)
 {
     <p style="color: green;">Connected to stock updates</p>
@@ -42,14 +18,104 @@ else
 }
 
 
+<h3>Balance: @(Balance.ToString("F2"))</h3>
+
+<p>Stock Symbol: <input type="text" @bind="StockSymbol" @onblur="FetchStockSymbol" /></p>
+<p>Current Price: @StockPrice.ToString("F2")</p>
+
+<!-- 
+Error Text
+-->
+@if (!ErrorText.Equals(""))
+{
+    <p style="color: red">@ErrorText</p>
+}
+
+<!-- Buy Stock -->
+<div>
+    <h2>Buy Stock</h2>
+    <p>Total Cost: @TotalCost</p>
+    <p>Share Amount: <input type="number" min="0" step="any" value="@ShareAmount" @onchange="ChangeShareAmount"/></p>
+    <button @onclick="BuyStock">Buy</button>
+</div>
+
+
+<div>
+    <h2>Sell Stock</h2>
+    <span>
+        <p>Stock Symbol: </p>
+        <select @bind="SellStockSymbol" @bind:event="onchange" @bind:after="CalculateSell" >
+            @foreach (StockGroup group in StockGroups)
+            {
+                if (SellStockSymbol == null && StockGroups.IndexOf(group) == 0)
+                {
+                    // Initialize if Symbol is null and this is the first item
+                    SellStockSymbol = group.Symbol;
+                    
+                    <option value="@group.Symbol" >@group.Symbol</option>
+                }
+                else
+                {
+                    <option value="@group.Symbol">@group.Symbol</option>
+                }
+            }
+        </select>
+    </span>
+    <p>Sell Price: <input type="number" step="any" min="0" @bind="SellPrice" @bind:event="onchange" @bind:after="CalculateSell"/></p>
+    <p>Share Amount: <input type="number" step="any" min="0" @bind="SellShareAmount" @bind:event="onchange" @bind:after="CalculateSell"/></p>
+    <p>Sell Date: <input type="date" @bind="SellDate" @bind:event="onchange" @bind:after="CalculateSell"/></p>
+    <p>Profit: @SellProfit</p>
+    <p>Fee: @SellFee</p>
+    @{
+        var sellTotalPrice = SellProfit - SellFee;
+        <p>Total Cost: @sellTotalPrice.ToString("F2")</p>
+    }
+    <button @onclick="SellStock">Sell</button>
+    
+    <!-- 
+    Owned Stocks Table
+    -->
+    <h2>Current Stocks</h2>
+    <table>
+        <thead>
+        <tr>
+            <th style="padding: 0 .25rem">Symbol</th>
+            <th style="padding: 0 .25rem">Amount</th>
+            <th style="padding: 0 .25rem">Price</th>
+        </tr>
+        </thead>
+        <tbody>
+            @foreach (var group in StockGroups)
+            {
+                <tr>
+                    <td style="text-align: center; padding: 0 .25rem">@group.Symbol</td> 
+                    <td style="text-align: center; padding: 0 .25rem">@group.NumberOfShares</td>
+                    <td style="text-align: right; padding: 0 .25rem">@group.LatestPrice</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+
+
+
+
+<!--
+
+Transaction History
+ 
+-->
+<h2>Transaction History</h2>
 <table>
     <thead>
-        <tr style="align-items: center">
+        <tr>
             <th>Date</th>
             <th>Symbol</th>
+            <th>Type</th>
             <th>Amount</th>
             <th>Price</th>
-            <th>Total Cost</th>
+            <th>Profit</th>
         </tr>
     </thead>
     <tbody>
@@ -57,10 +123,14 @@ else
         {
             <tr>
                 <td>@t.date</td>
-                <td>@t.shortName</td>
-                <td>@t.amount</td>
-                <td>@t.price</td>
-                <td>@t.totalCost</td>
+                <td style="text-align: center;">@t.shortName</td>
+                <td style="text-align: center;">@t.transactionType</td>
+                <td style="text-align: center;">@t.amount</td>
+                <td style="text-align: right;">@t.price</td>
+                @if (t.transactionType.Equals(TransactionType.SELL))
+                {
+                    <td style="text-align: right;">@t.profit</td>
+                }
                 
             </tr>
         }
@@ -68,36 +138,37 @@ else
 </table>
 
 @code {
+    private HubConnection? hubConnection;
+    private bool IsConnected => hubConnection?.State == HubConnectionState.Connected;
+
     private string StockSymbol { get; set; } = "AAPL";
     private decimal StockPrice { get; set; }
 
-    private decimal ShareAmount { get; set; } = 1;
-    private decimal SellShareAmount { get; set; } = 0;
+    // Buy Variables
+    private decimal ShareAmount { get; set; } = 0;
     private decimal TotalCost { get; set; }
 
-    private string ErrorText { get; set; } = "";
-    
 
-    private string RANDOM = "";
-    
+    // Sell Variables
+    private string SellStockSymbol { get; set; }
+    private DateTime SellDate { get; set; } = DateTime.Now;
+    private decimal SellPrice { get; set; }
+        // Should not be <= 0 and > StockGroup.NumberOfShares 
+    private decimal SellShareAmount { get; set; } = 0;
+        // Calculated based on SellStockSymbol
+    private decimal SellProfit { get; set; } = 0;
+        // wihtin 7 days deduct 18% from profit
+    private decimal SellFee { get; set; }
+
+    // Errors
+    private string ErrorText { get; set; } = "";
+
+
     // User
     private decimal Balance;
     private List<Transaction> Transactions = new List<Transaction>();
+    private List<StockGroup> StockGroups = new List<StockGroup>();
 
-    
-    private void ChangeShareAmount(ChangeEventArgs e)
-    {
-        if (e.Value == null)
-        {
-            return;
-        }
-        
-        ShareAmount = Decimal.Parse(e.Value.ToString());
-        TotalCost = CalculateTotalCost();
-    }
-    
-    private HubConnection? hubConnection;
-    private bool IsConnected => hubConnection?.State == HubConnectionState.Connected;
 
     protected override async Task OnInitializedAsync()
     {
@@ -108,20 +179,40 @@ else
     {
         // Init Balance to 50000 
         Balance = 50000;
-
+        
+        
         TotalCost = CalculateTotalCost();
     }
-    
-    // Used to control disabled on input 
-    private bool IsBuyButtonDisabled()
+
+    // Control Methods
+    private void ChangeStockSymbol()
     {
-        return TotalCost > Balance;
+        StockSymbol = SellStockSymbol;
+        FetchStockSymbol();
     }
 
-    // Used to calculate TotalPrice
-    private decimal CalculateTotalCost()
+    private async void FetchStockSymbol()
     {
-        return StockPrice * ShareAmount;
+        // Send request to server to Update Stock
+        if (hubConnection is not null && hubConnection.State == HubConnectionState.Connected)
+        {
+            await hubConnection.SendAsync("SendStockUpdate", StockSymbol);
+        }
+    }
+
+    // Buy Methods
+    private void ChangeShareAmount(ChangeEventArgs e)
+    {
+        if (e.Value == null)
+        {
+            return;
+        }
+
+        ShareAmount = Decimal.Parse(e.Value.ToString());
+        TotalCost = CalculateTotalCost();
+
+        // Update State
+        InvokeAsync(StateHasChanged);
     }
 
     // Send BuyStock request and listen for ReceiveBuyStockUpdate
@@ -133,13 +224,110 @@ else
             ErrorText = "Insufficient Balance";
             return;
         }
-        
+
         // Send request to server to BuyStock
         if (hubConnection is not null && hubConnection.State == HubConnectionState.Connected)
         {
             await hubConnection.SendAsync("SendBuyStockUpdate", StockSymbol, ShareAmount);
         }
     }
+
+    // Used to control disabled on input 
+    private bool IsBuyButtonDisabled()
+    {
+        return TotalCost > Balance && ShareAmount > 0;
+    }
+
+    // Used to calculate TotalPrice
+    private decimal CalculateTotalCost()
+    {
+        return StockPrice * ShareAmount;
+    }
+
+
+    // Sell Methods
+
+    private void CalculateSell()
+    {
+        Console.WriteLine("Sell Stock Symbol: " + SellStockSymbol);
+        
+        if (SellStockSymbol == null || SellStockSymbol.Length == 0)
+        {
+            return;
+        }
+        var group = StockGroups.Find(group => group.Symbol.Equals(SellStockSymbol));
+        
+        Console.WriteLine("Group Null: " + (group == null));
+        if (group == null)
+        {
+            ErrorText = "Could not calculate sell totals. Stock was not found: " + SellStockSymbol;
+            return;
+        }
+
+        var lastTransaction = Transactions.Find(transaction => transaction.shortName.Equals(group.Symbol));
+
+        if (lastTransaction == null)
+        {
+            ErrorText = "Could not calculate sell totals. Stock hasn't been bought: " + SellStockSymbol;
+            return;
+        }
+        
+        SellProfit = (SellPrice * SellShareAmount) - (lastTransaction.price * SellShareAmount);
+        
+        // Fee calc
+        var days = (SellDate - lastTransaction.date).Days;
+
+        if (days <= 7)
+        {
+            SellFee = SellProfit * (decimal) .18;
+        }
+        else
+        {
+            SellFee = SellProfit * (decimal) .05;
+        }
+    }
+
+    
+    private async Task SellStock()
+    {
+        if (SellStockSymbol == null || SellStockSymbol.Length == 0)
+        {
+            ErrorText = "SellStockSymbol is null or empty";
+            return;
+        }
+
+        if (SellShareAmount <= 0)
+        {
+            ErrorText = "SellShareAmount is <= 0";
+            return;
+        }
+
+        // Check StockGroups for enough shares
+        var stockGroup = StockGroups.Find(e => e.Symbol.Equals(SellStockSymbol));
+        
+        if (stockGroup == null)
+        {
+            ErrorText = "You don't own any shares for " + SellStockSymbol;
+            return;
+        }
+
+        if (SellShareAmount > stockGroup.NumberOfShares)
+        {
+            ErrorText = "You don't have enough shares to sell";
+            return;
+        }
+        
+
+        if (hubConnection == null || hubConnection.State != HubConnectionState.Connected)
+        {
+            Console.WriteLine("Hub is not connected!");
+            return;
+        }
+            
+        await hubConnection.SendAsync("SendSellStockUpdate", SellStockSymbol, SellShareAmount);
+    }
+    
+    
     
     
     
@@ -164,7 +352,14 @@ else
 
             // Debugging: Log the received values to the console
             Console.WriteLine($"Received stock update: {StockSymbol} - {StockPrice}");
-
+            
+            // Add latest price fetched to StockGroup here
+            var group = StockGroups.Find(group => group.Symbol.Equals(symbol));
+            if (group != null)
+            {
+                group.LatestPrice = price;
+            }
+            
             InvokeAsync(StateHasChanged);
         });
         
@@ -174,13 +369,84 @@ else
             // Show message of transaction.
 
             Balance -= totalCost;
-            Transactions.Add(new Transaction(stockSymbol, amount, price, totalCost, TransactionType.BUY));
+            Transactions.Add(new Transaction(stockSymbol, amount, price, TransactionType.BUY));
+            
+            // Find If Stock Group Exists in list
+            var stockGroup = StockGroups.Find(group => group.Symbol.Equals(stockSymbol));
+
+            // If no stock group Create new group with amount
+            if (stockGroup == null)
+            {
+                StockGroups.Add(new StockGroup(stockSymbol, price, amount));
+            }
+            else
+            {
+                // Add amount to stock group NumberOfShares
+                stockGroup.NumberOfShares += amount;
+                // Set price to latest price
+                stockGroup.LatestPrice = price;
+            }
+            
             InvokeAsync(StateHasChanged);
+            StateHasChanged();
         });
         
-        // Listen for Sell
-        
+        // Listen for sale
+        hubConnection.On<string, decimal, decimal>("ReceiveSellStockUpdate", (stockSymbol, amount, price) =>
+        {
+            
+            var group = StockGroups.Find(group => group.Symbol.Equals(SellStockSymbol));
 
+            if (group == null)
+            {
+                ErrorText = "Could not calculate sell totals. Stock was not found: " + SellStockSymbol;
+                return;
+            }
+
+            var lastTransaction = Transactions.Find(transaction => transaction.shortName.Equals(group.Symbol));
+
+            if (lastTransaction == null)
+            {
+                ErrorText = "Could not calculate sell totals. Stock hasn't been bought: " + SellStockSymbol;
+                return;
+            }
+
+            var stockGroup = StockGroups.Find(e => e.Symbol == stockSymbol);
+            if (stockGroup == null || stockGroup.NumberOfShares < amount)
+            {
+                ErrorText = "You don't have enough shares to sell";
+                return;
+            }
+        
+            SellProfit = (SellPrice * SellShareAmount) - (lastTransaction.price * SellShareAmount);
+        
+            // Fee calc
+            int days = (SellDate - lastTransaction.date).Days;
+
+            if (days <= 7)
+            {
+                SellFee = SellProfit * (decimal) .18;
+            }
+            else
+            {
+                SellFee = SellProfit * (decimal) .05;
+            }
+            
+            // Create Transaction
+            // Subtracted the sell fee from the profit to display accurate logs. Probably should add a SellFee field
+            Transactions.Add(new Transaction(stockSymbol, amount, price, TransactionType.SELL ,SellProfit - SellFee));
+            
+            // Update StockGroups
+            group.NumberOfShares -= amount;
+            group.LatestPrice = price;
+
+            Balance += SellProfit - SellFee;
+            
+            InvokeAsync(StateHasChanged);
+            StateHasChanged();
+        });
+        
+        
         try
         {
             await hubConnection.StartAsync();
@@ -200,6 +466,8 @@ else
         {
             await hubConnection.SendAsync("SendStockUpdate", StockSymbol);
             Console.WriteLine("Requesting stock update...");
+            // TODO: remove this
+            break;
             await Task.Delay(60000); 
         }
     }
